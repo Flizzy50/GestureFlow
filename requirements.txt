@@ -1,0 +1,10 @@
+# Phase 1 — vision pipeline only.
+# Action / control libs (pyautogui, pynput, pycaw) are intentionally
+# deferred to Phase 3 when they have a caller.
+#
+# mediapipe is pinned EXACTLY: 0.10.30 ships a broken Windows wheel whose
+# Tasks-API ctypes bindings can't find `free`; 0.10.31+ removed the legacy
+# solutions module entirely. 0.10.21 has both APIs working cleanly.
+opencv-python>=4.9,<5
+mediapipe==0.10.21
+numpy>=1.26,<2

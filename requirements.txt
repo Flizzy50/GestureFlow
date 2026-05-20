@@ -8,3 +8,15 @@
 opencv-python>=4.9,<5
 mediapipe==0.10.21
 numpy>=1.26,<2
+
+# Phase 3 — OS action layer.
+# pynput sends keyboard events including the media virtual keys
+# (VK_MEDIA_PLAY_PAUSE, etc.) that Spotify/VLC/etc. listen to.
+pynput>=1.7,<2
+# pycaw exposes the Windows Core Audio API (IAudioEndpointVolume) for
+# reading and setting the system master volume. We use the modern
+# AudioDevice.EndpointVolume convenience accessor — older versions
+# (pre-20220416) required a manual COM Activate/cast and won't work.
+# Windows-only; we'd swap this for a CoreAudio bridge on macOS or
+# amixer on Linux later. comtypes is pulled in transitively.
+pycaw>=20220416

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from gestures.base import Detection, FeatureBundle, GestureDetector
-from gestures.features import pinch_distance
+from gestures.features import LM, pinch_distance
 
 
 class OpenPalmDetector(GestureDetector):
@@ -176,8 +176,15 @@ class TwoFingersDetector(GestureDetector):
         confidence = up * down_inv
         if confidence < self._min_conf:
             return None
+        # ScrollAction reads wrist_y to compute vertical drag. Wrist is the
+        # most stable single landmark (finger tips jitter with micro-motion).
+        wrist = features.hand.landmark(LM.WRIST)
         return Detection(
             name=self.name,
             confidence=confidence,
-            metadata={"finger_scores": f.as_tuple},
+            metadata={
+                "finger_scores": f.as_tuple,
+                "wrist_y": wrist.y,
+                "wrist_x": wrist.x,
+            },
         )

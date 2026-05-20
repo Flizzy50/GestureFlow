@@ -7,6 +7,7 @@ Later we can hydrate this from a JSON/TOML file without touching call sites.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Dict
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,16 @@ class CameraConfig:
 
 
 @dataclass(frozen=True)
+class StabilityConfig:
+    """Hysteresis applied between recognizer and dispatcher."""
+    # A detection must persist for this many consecutive frames before
+    # it's forwarded to action handlers. At ~17 FPS, 3 = ~180 ms confirm
+    # delay — visibly responsive while filtering single-frame MediaPipe
+    # blips. Drop to 1 to disable hysteresis entirely (debug/tuning only).
+    rising_frames: int = 3
+
+
+@dataclass(frozen=True)
 class HandTrackerConfig:
     max_num_hands: int = 2
     min_detection_confidence: float = 0.6
@@ -37,10 +48,24 @@ class HandTrackerConfig:
     model_path: str = "models/hand_landmarker.task"
 
 
+# Gesture name -> action name. Action names map to ActionHandler instances
+# in main.py's ACTION_HANDLERS registry. Keeping this layer as plain data
+# (rather than handler instances) means we can hydrate it from JSON/TOML
+# later without restructuring.
+_DEFAULT_BINDINGS: Dict[str, str] = {
+    "fist": "play_pause",
+    "pinch": "volume",
+    "two_fingers": "scroll",
+    # Phase 4 will add: "swipe_left": "browser_back", "swipe_right": "browser_forward"
+}
+
+
 @dataclass(frozen=True)
 class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     hand_tracker: HandTrackerConfig = field(default_factory=HandTrackerConfig)
+    stability: StabilityConfig = field(default_factory=StabilityConfig)
+    bindings: Dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_BINDINGS))
     # Mirror the frame horizontally so the user sees themselves naturally
     # ("selfie view"). This must happen BEFORE inference if we want gesture
     # semantics like "swipe right" to match the user's intent.

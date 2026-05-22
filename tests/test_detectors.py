@@ -185,5 +185,48 @@ class TestRecognizerComposition(unittest.TestCase):
             GestureRecognizer([])
 
 
+class TestRecognizerMotionIntegration(unittest.TestCase):
+    """Verify the recognizer correctly bundles a MotionSnapshot into
+    FeatureBundle when a tracker is provided."""
+
+    def test_no_tracker_leaves_motion_none(self):
+        from gestures.base import FeatureBundle
+        rec = GestureRecognizer([OpenPalmDetector()])
+        # Process succeeds without raising — motion remains None.
+        # Indirect check: detector still works (it doesn't read motion).
+        dets = rec.process(open_palm_hand())
+        self.assertTrue(dets)
+
+    def test_with_tracker_populates_motion(self):
+        from gestures.dynamic_gestures import SwipeLeftDetector
+        from gestures.motion import MotionTracker
+        from tests._factories import build_hand, straight_finger
+
+        def _hand_at(x):
+            return build_hand(
+                wrist=(x, 0.5, 0.0),
+                thumb=straight_finger(0.40, 0.85, -0.15, -0.10),
+                index=straight_finger(0.45, 0.75, -0.02, -0.40),
+                middle=straight_finger(0.50, 0.75,  0.00, -0.45),
+                ring=straight_finger(0.55, 0.75,   0.02, -0.40),
+                pinky=straight_finger(0.60, 0.78,  0.10, -0.30),
+            )
+
+        tracker = MotionTracker(window_seconds=1.0)
+        rec = GestureRecognizer([SwipeLeftDetector()], motion_tracker=tracker)
+
+        # Simulate a leftward swipe across several frames.
+        positions = [(0.0, 0.90), (0.05, 0.75), (0.10, 0.55), (0.15, 0.30), (0.20, 0.20), (0.25, 0.15)]
+        last_dets = []
+        for t, x in positions:
+            h = _hand_at(x)
+            tracker.update(h, t)
+            last_dets = rec.process(h)
+
+        # After enough samples accumulate, SwipeLeftDetector should fire.
+        self.assertTrue(last_dets, "expected SwipeLeftDetector to fire after motion accumulates")
+        self.assertEqual(last_dets[0].name, "swipe_left")
+
+
 if __name__ == "__main__":
     unittest.main()

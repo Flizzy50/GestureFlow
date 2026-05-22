@@ -2,8 +2,8 @@
 
 Pipeline:
     Camera (thread) -> mirror -> HandTracker -> GestureRecognizer
-                    -> ActionDispatcher -> OS effects
-                    -> overlay -> screen
+                    -> StabilityFilter -> ActionDispatcher -> OS effects
+                    -> Overlay.draw -> screen
 """
 from __future__ import annotations
 
@@ -12,15 +12,17 @@ import time
 from typing import Dict, List, Optional
 
 import cv2
-import numpy as np
 
 from config import DEFAULT_CONFIG, Config
 from controls.audio import VolumeAction
-from controls.base import ActionHandler, FiredAction
+from controls.base import ActionHandler
+from controls.browser import BrowserBackAction, BrowserForwardAction
 from controls.dispatcher import ActionDispatcher
 from controls.media import PlayPauseAction
 from controls.scroll import ScrollAction
 from gestures.base import Detection
+from gestures.dynamic_gestures import SwipeLeftDetector, SwipeRightDetector
+from gestures.motion import MotionTracker
 from gestures.recognizer import GestureRecognizer
 from gestures.state_machine import StabilityFilter
 from gestures.static_gestures import (
@@ -29,71 +31,32 @@ from gestures.static_gestures import (
     PinchDetector,
     TwoFingersDetector,
 )
+from ui.overlay import Overlay
 from utils.logger import configure_logging, get_logger
 from utils.timers import FpsCounter
 from vision.camera import Camera, CameraError
-from vision.hand_tracker import HAND_CONNECTIONS, Hand, HandTracker
+from vision.hand_tracker import HandTracker
 
 
 # Registry of available action handlers. Config bindings reference these
 # by name. Adding a new action = construct it here + bind in config.
-# Phase 3.2 and 3.3 will extend this with VolumeAction and ScrollAction.
 def _build_action_handlers() -> Dict[str, ActionHandler]:
     return {
         "play_pause": PlayPauseAction(),
         "volume": VolumeAction(),
         "scroll": ScrollAction(),
+        "browser_back": BrowserBackAction(),
+        "browser_forward": BrowserForwardAction(),
     }
 
 log = get_logger("gestureflow.main")
 
 
-# ---------- minimal Phase-1 rendering ----------
-# A proper overlay module arrives in Phase 5. For now, just enough to see
-# that the pipeline is alive and tracking quality is acceptable.
-
-_HUD_COLOR = (0, 255, 0)
-_LANDMARK_COLOR = (0, 200, 255)
-_CONNECTION_COLOR = (200, 200, 200)
-
-
-def _draw_hands(frame: np.ndarray, hands: List[Hand]) -> None:
-    h, w = frame.shape[:2]
-    for hand in hands:
-        pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand.landmarks]
-        for a, b in HAND_CONNECTIONS:
-            cv2.line(frame, pts[a], pts[b], _CONNECTION_COLOR, 1, cv2.LINE_AA)
-        for p in pts:
-            cv2.circle(frame, p, 3, _LANDMARK_COLOR, -1, cv2.LINE_AA)
-
-
-_FIRED_BANNER_SECONDS = 1.5  # how long an "action fired!" banner lingers
-
-
-def _draw_hud(
-    frame: np.ndarray,
-    fps: float,
-    n_hands: int,
-    top_detection: Optional[Detection],
-    last_fired: Optional[FiredAction],
-    now: float,
-) -> None:
-    lines = [f"FPS: {fps:5.1f}", f"hands: {n_hands}"]
-    if top_detection is not None:
-        pct = int(round(top_detection.confidence * 100))
-        lines.append(f"{top_detection.name}: {pct}%")
-    for i, text in enumerate(lines):
-        cv2.putText(
-            frame, text, (10, 30 + i * 28),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.7, _HUD_COLOR, 2, cv2.LINE_AA,
-        )
-    # Action-fired banner: bottom-left, fades after _FIRED_BANNER_SECONDS.
-    if last_fired is not None and (now - last_fired.fired_at) < _FIRED_BANNER_SECONDS:
-        h = frame.shape[0]
-        cv2.putText(
-            frame, f">> {last_fired.action_name}", (10, h - 20),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 0), 2, cv2.LINE_AA,
-        )
+# Static vs dynamic partition is a pipeline decision (which detection
+# updates persist on the HUD vs flash transiently). Drawing semantics
+# live in ui/overlay.py — this constant stays here because main.py is
+# the one routing detections into the right HUD lane.
+_DYNAMIC_GESTURE_NAMES = frozenset({"swipe_left", "swipe_right"})
 
 
 # ---------- pipeline ----------
@@ -102,12 +65,21 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
     configure_logging(cfg.log_level)
     log.info("GestureFlow — press 'q' to quit")
 
-    recognizer = GestureRecognizer([
-        OpenPalmDetector(),
-        FistDetector(),
-        PinchDetector(),
-        TwoFingersDetector(),
-    ])
+    motion_tracker = MotionTracker(
+        window_seconds=cfg.motion.window_seconds,
+        max_samples=cfg.motion.max_samples,
+    )
+    recognizer = GestureRecognizer(
+        detectors=[
+            OpenPalmDetector(),
+            FistDetector(),
+            PinchDetector(),
+            TwoFingersDetector(),
+            SwipeLeftDetector(),
+            SwipeRightDetector(),
+        ],
+        motion_tracker=motion_tracker,
+    )
     log.info("recognizer loaded with detectors: %s", recognizer.detector_names)
 
     stability = StabilityFilter(rising_frames=cfg.stability.rising_frames)
@@ -130,10 +102,11 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
     dispatcher = ActionDispatcher(bindings)
     log.info("dispatcher bindings: %s", {g: h.name for g, h in bindings.items()})
 
+    overlay = Overlay()
+
     try:
         with Camera(cfg.camera) as camera, HandTracker(cfg.hand_tracker) as tracker:
             fps = FpsCounter(alpha=0.1)
-            last_fired: Optional[FiredAction] = None
             while True:
                 read = camera.read_new()
                 if read is None:
@@ -152,27 +125,45 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
                 hands = tracker.process(frame)
                 fps.tick()
 
+                now = time.monotonic()
+                # Update motion buffers BEFORE recognition so the recognizer
+                # reads the freshest snapshot for each hand.
+                for hand in hands:
+                    motion_tracker.update(hand, now)
+
                 # Recognize per hand, flatten, then debounce.
                 all_detections: List[Detection] = []
                 for hand in hands:
                     all_detections.extend(recognizer.process(hand))
 
                 stable_detections = stability.update(all_detections)
-                top_detection: Optional[Detection] = (
-                    stable_detections[0] if stable_detections else None
+                # Partition by category: static gestures persist on the HUD,
+                # dynamic gestures (swipes) flash transiently and get a
+                # linger so the user can actually see them.
+                top_static: Optional[Detection] = next(
+                    (d for d in stable_detections if d.name not in _DYNAMIC_GESTURE_NAMES),
+                    None,
                 )
-
-                now = time.monotonic()
-                fired = dispatcher.dispatch(stable_detections, now)
-                if fired:
-                    last_fired = fired[0]
+                top_dynamic: Optional[Detection] = next(
+                    (d for d in stable_detections if d.name in _DYNAMIC_GESTURE_NAMES),
+                    None,
+                )
+                if top_dynamic is not None:
+                    overlay.note_dynamic(top_dynamic, now)
                     log.info(
-                        "action fired: %s (from %s, conf=%.2f)",
-                        last_fired.action_name, last_fired.gesture_name, last_fired.confidence,
+                        "dynamic gesture stable: %s (conf=%.2f)",
+                        top_dynamic.name, top_dynamic.confidence,
                     )
 
-                _draw_hands(frame, hands)
-                _draw_hud(frame, fps.fps, len(hands), top_detection, last_fired, now)
+                fired = dispatcher.dispatch(stable_detections, now)
+                if fired:
+                    overlay.note_fired(fired[0])
+                    log.info(
+                        "action fired: %s (from %s, conf=%.2f)",
+                        fired[0].action_name, fired[0].gesture_name, fired[0].confidence,
+                    )
+
+                overlay.draw(frame, fps.fps, hands, top_static, now)
 
                 cv2.imshow(cfg.window_title, frame)
                 if cv2.waitKey(1) & 0xFF == ord("q"):

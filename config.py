@@ -25,6 +25,19 @@ class CameraConfig:
 
 
 @dataclass(frozen=True)
+class MotionConfig:
+    """Per-hand wrist-position history used by dynamic gesture detectors."""
+    # How far back the tracker looks. A typical swipe takes 150-300ms, so
+    # 400ms is enough to capture the whole motion plus a small buffer.
+    # Longer windows dilute the velocity signal (slow drift looks like
+    # a real swipe); shorter windows miss the start of slow swipes.
+    window_seconds: float = 0.4
+    # Hard cap on buffered samples — protects memory at high FPS.
+    # 60 samples / 0.4s = 150 FPS headroom, well above our ~17 FPS reality.
+    max_samples: int = 60
+
+
+@dataclass(frozen=True)
 class StabilityConfig:
     """Hysteresis applied between recognizer and dispatcher."""
     # A detection must persist for this many consecutive frames before
@@ -56,7 +69,8 @@ _DEFAULT_BINDINGS: Dict[str, str] = {
     "fist": "play_pause",
     "pinch": "volume",
     "two_fingers": "scroll",
-    # Phase 4 will add: "swipe_left": "browser_back", "swipe_right": "browser_forward"
+    "swipe_left": "browser_back",
+    "swipe_right": "browser_forward",
 }
 
 
@@ -64,6 +78,7 @@ _DEFAULT_BINDINGS: Dict[str, str] = {
 class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     hand_tracker: HandTrackerConfig = field(default_factory=HandTrackerConfig)
+    motion: MotionConfig = field(default_factory=MotionConfig)
     stability: StabilityConfig = field(default_factory=StabilityConfig)
     bindings: Dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_BINDINGS))
     # Mirror the frame horizontally so the user sees themselves naturally

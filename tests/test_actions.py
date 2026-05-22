@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from controls.audio import VolumeAction
 from controls.base import ActionHandler, CooldownGate, FiredAction, RateLimiter
+from controls.browser import BrowserBackAction, BrowserForwardAction
 from controls.dispatcher import ActionDispatcher
 from controls.media import PlayPauseAction
 from controls.scroll import ScrollAction
@@ -419,6 +420,63 @@ class TestScrollAction(unittest.TestCase):
     def test_invalid_min_delta_rejected(self):
         with self.assertRaises(ValueError):
             ScrollAction(min_delta_clicks=0)
+
+
+def _swipe(name: str, confidence: float = 0.8) -> Detection:
+    return Detection(name=name, confidence=confidence, metadata={})
+
+
+class TestBrowserBackAction(unittest.TestCase):
+    def test_fires_on_first_rising_edge(self):
+        presses = []
+        a = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: presses.append("back"))
+        self.assertTrue(a.update(_swipe("swipe_left"), now=0.0))
+        self.assertEqual(presses, ["back"])
+
+    def test_does_not_re_fire_during_residual_buffer_continuation(self):
+        """The whole reason for the 0.8s cooldown: a single swipe leaves
+        samples in the motion buffer for ~400ms, so the detector keeps
+        firing for that long. The handler must NOT re-press the key."""
+        presses = []
+        a = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: presses.append("back"))
+        a.update(_swipe("swipe_left"), now=0.0)
+        for t in (0.05, 0.10, 0.20, 0.30, 0.40):
+            a.update(_swipe("swipe_left"), now=t)
+        self.assertEqual(len(presses), 1)
+
+    def test_re_fires_after_release_and_cooldown(self):
+        presses = []
+        a = BrowserBackAction(cooldown_seconds=0.5, key_press=lambda: presses.append("back"))
+        a.update(_swipe("swipe_left"), now=0.0)   # fire
+        a.update(None, now=0.45)                  # release (gesture absent)
+        a.update(_swipe("swipe_left"), now=0.60)  # past cooldown -> fire
+        self.assertEqual(len(presses), 2)
+
+    def test_name(self):
+        self.assertEqual(BrowserBackAction().name, "browser_back")
+
+
+class TestBrowserForwardAction(unittest.TestCase):
+    def test_fires_on_first_rising_edge(self):
+        presses = []
+        a = BrowserForwardAction(cooldown_seconds=0.8, key_press=lambda: presses.append("fwd"))
+        self.assertTrue(a.update(_swipe("swipe_right"), now=0.0))
+        self.assertEqual(presses, ["fwd"])
+
+    def test_independent_handlers_dont_share_state(self):
+        """Back and forward are separate instances; firing one must not
+        affect the cooldown of the other."""
+        back_presses, fwd_presses = [], []
+        back = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: back_presses.append("b"))
+        fwd = BrowserForwardAction(cooldown_seconds=0.8, key_press=lambda: fwd_presses.append("f"))
+        back.update(_swipe("swipe_left"), now=0.0)
+        # Forward should still fire immediately even though back just fired.
+        fwd.update(_swipe("swipe_right"), now=0.05)
+        self.assertEqual(back_presses, ["b"])
+        self.assertEqual(fwd_presses, ["f"])
+
+    def test_name(self):
+        self.assertEqual(BrowserForwardAction().name, "browser_forward")
 
 
 if __name__ == "__main__":

@@ -69,9 +69,12 @@ class FistDetector(GestureDetector):
 
     def __init__(
         self,
-        min_confidence: float = 0.75,
-        max_per_finger: float = 0.40,
+        min_confidence: float = 0.80,
+        max_per_finger: float = 0.30,
     ) -> None:
+        # Tighter than the original (0.75/0.40) so a casually relaxed hand
+        # doesn't trigger play/pause. max_per_finger=0.30 demands every
+        # finger be bent past ~95 degrees — clearly curled, not "kind of".
         self._min_conf = min_confidence
         self._max_per = max_per_finger
 

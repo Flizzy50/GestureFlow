@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from vision.hand_tracker import Hand
 from gestures.features import FingerExtension
+
+if TYPE_CHECKING:
+    from gestures.motion import MotionSnapshot
 
 
 @dataclass(frozen=True)
@@ -23,10 +26,16 @@ class FeatureBundle:
     matters: as we add more detectors, each shouldn't redundantly compute
     finger extensions or hand scale. It also guarantees every detector
     sees a consistent view of the same frame.
+
+    `motion` is optional — populated when the recognizer is constructed
+    with a MotionTracker. Static detectors ignore it; dynamic detectors
+    (swipes) read it. Defaulting to None keeps backward compat with all
+    existing test code that builds FeatureBundle directly.
     """
     hand: Hand
     fingers: FingerExtension
     hand_scale: float
+    motion: Optional["MotionSnapshot"] = None
 
 
 @dataclass(frozen=True)

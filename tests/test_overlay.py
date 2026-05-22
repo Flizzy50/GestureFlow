@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
 from controls.base import FiredAction
 from gestures.base import Detection
+from tests._factories import open_palm_hand
 from ui.overlay import Overlay
 
 
@@ -109,6 +112,56 @@ class TestOverlayStateIndependence(unittest.TestCase):
         # At t=0.6, the fired banner has expired but the dynamic linger hasn't.
         self.assertTrue(o.dynamic_visible(now=0.6))
         self.assertFalse(o.fired_visible(now=0.6))
+
+
+class TestOverlayDrawSmoke(unittest.TestCase):
+    """End-to-end draw() smoke tests: build a frame, exercise every code
+    path, ensure no exceptions. Doesn't verify visual output — that's an
+    integration concern — but does catch the kind of bug where one of
+    the cv2 calls receives a value of the wrong type."""
+
+    def setUp(self):
+        # Standard 1280x720 frame, RGB-style channels.
+        self.frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+    def test_draw_with_no_hands(self):
+        o = Overlay()
+        o.draw(self.frame, fps=17.0, hands=[], top_static=None, now=0.0)
+        # If we get here, nothing crashed.
+
+    def test_draw_with_one_hand_and_static_detection(self):
+        o = Overlay()
+        o.draw(
+            self.frame, fps=17.0, hands=[open_palm_hand()],
+            top_static=_det("open_palm", 0.95), now=0.0,
+        )
+
+    def test_draw_with_swipe_arrow_visible(self):
+        """Exercises the arrow-drawing branch."""
+        o = Overlay(dynamic_linger_seconds=1.0)
+        o.note_dynamic(_det("swipe_left", 0.7), now=0.0)
+        o.draw(
+            self.frame, fps=17.0, hands=[open_palm_hand()],
+            top_static=_det("open_palm", 0.95), now=0.3,
+        )
+
+    def test_draw_with_fired_banner_visible(self):
+        o = Overlay()
+        o.note_fired(_fired("play_pause", fired_at=0.0))
+        o.draw(
+            self.frame, fps=17.0, hands=[open_palm_hand()],
+            top_static=None, now=0.5,
+        )
+
+    def test_draw_with_full_state(self):
+        """All overlays active simultaneously — the worst-case render."""
+        o = Overlay()
+        o.note_dynamic(_det("swipe_right", 0.8), now=0.0)
+        o.note_fired(_fired("browser_forward", fired_at=0.0))
+        o.draw(
+            self.frame, fps=17.0, hands=[open_palm_hand()],
+            top_static=_det("open_palm", 0.97), now=0.5,
+        )
 
 
 if __name__ == "__main__":

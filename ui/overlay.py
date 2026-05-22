@@ -27,6 +27,7 @@ import numpy as np
 
 from controls.base import FiredAction
 from gestures.base import Detection
+from gestures.features import LM, finger_extensions
 from vision.hand_tracker import HAND_CONNECTIONS, Hand
 
 
@@ -35,6 +36,12 @@ _DYNAMIC_COLOR = (0, 200, 255)   # amber: transient events (swipes)
 _LANDMARK_COLOR = (0, 200, 255)
 _CONNECTION_COLOR = (200, 200, 200)
 _FIRED_COLOR = (255, 255, 0)     # cyan: action-fired banner
+
+_BAR_LABELS = ("T", "I", "M", "R", "P")  # thumb, index, middle, ring, pinky
+_BAR_ON_COLOR = (0, 255, 0)
+_BAR_OFF_COLOR = (60, 130, 130)
+_BAR_BG_COLOR = (40, 40, 40)
+_BAR_THRESHOLD = 0.5             # extension above which a finger reads "on"
 
 
 class Overlay:
@@ -90,8 +97,12 @@ class Overlay:
         top_static: Optional[Detection],
         now: float,
     ) -> None:
-        """Render landmarks, HUD lines, and banner onto `frame` in place."""
+        """Render landmarks, HUD, finger bars, and swipe arrow into `frame`."""
         self._draw_hands(frame, hands)
+        primary = hands[0] if hands else None
+        if primary is not None:
+            self._draw_finger_bars(frame, primary)
+            self._draw_swipe_arrow(frame, primary, now)
         self._draw_hud(frame, fps, len(hands), top_static, now)
 
     def _draw_hands(self, frame: np.ndarray, hands: Sequence[Hand]) -> None:
@@ -102,6 +113,70 @@ class Overlay:
                 cv2.line(frame, pts[a], pts[b], _CONNECTION_COLOR, 1, cv2.LINE_AA)
             for p in pts:
                 cv2.circle(frame, p, 3, _LANDMARK_COLOR, -1, cv2.LINE_AA)
+
+    def _draw_finger_bars(self, frame: np.ndarray, hand: Hand) -> None:
+        """Five small vertical bars in the bottom-right showing per-finger
+        extension scores. Lets the user see WHY a gesture is or isn't
+        firing (e.g., 'fist not registering because thumb still reads 0.6').
+        """
+        fingers = finger_extensions(hand)
+        scores = fingers.as_tuple
+
+        h, w = frame.shape[:2]
+        bar_w, bar_h, gap, margin = 14, 64, 8, 20
+        x0 = w - margin - (5 * bar_w + 4 * gap)
+        y_top = h - margin - bar_h - 18  # leave 18 px below for labels
+
+        for i, (score, label) in enumerate(zip(scores, _BAR_LABELS)):
+            x = x0 + i * (bar_w + gap)
+            cv2.rectangle(
+                frame, (x, y_top), (x + bar_w, y_top + bar_h),
+                _BAR_BG_COLOR, -1,
+            )
+            filled = int(round(bar_h * max(0.0, min(1.0, score))))
+            color = _BAR_ON_COLOR if score >= _BAR_THRESHOLD else _BAR_OFF_COLOR
+            if filled > 0:
+                cv2.rectangle(
+                    frame,
+                    (x, y_top + bar_h - filled),
+                    (x + bar_w, y_top + bar_h),
+                    color, -1,
+                )
+            cv2.putText(
+                frame, label, (x + 2, y_top + bar_h + 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA,
+            )
+
+    def _draw_swipe_arrow(
+        self, frame: np.ndarray, hand: Hand, now: float,
+    ) -> None:
+        """Directional arrow from the wrist when a swipe is fresh.
+
+        Anchored at the wrist (most stable single landmark) and lingers
+        with the dynamic-gesture banner so the user sees the direction
+        for the full 1s window, not just the brief detection moment.
+        """
+        if not self.dynamic_visible(now):
+            return
+        assert self._last_dynamic is not None
+        name = self._last_dynamic.name
+        if name == "swipe_left":
+            direction = -1
+        elif name == "swipe_right":
+            direction = +1
+        else:
+            return
+
+        h, w = frame.shape[:2]
+        wrist = hand.landmark(LM.WRIST)
+        cx = int(wrist.x * w)
+        cy = int(wrist.y * h)
+        arrow_len = int(w * 0.12)  # ~12% of frame width
+        start = (cx, cy)
+        end = (cx + direction * arrow_len, cy)
+        cv2.arrowedLine(
+            frame, start, end, _DYNAMIC_COLOR, 5, cv2.LINE_AA, tipLength=0.35,
+        )
 
     def _draw_hud(
         self,

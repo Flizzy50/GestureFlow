@@ -41,7 +41,7 @@ winget install --id Python.Python.3.12 -e
 # → toggle off every Python entry
 
 # Clone and set up the venv:
-git clone https://github.com/sarilp/GestureFlow.git
+git clone https://github.com/Flizzy50/GestureFlow.git
 cd GestureFlow
 & "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" -m venv .venv
 .\.venv\Scripts\Activate.ps1

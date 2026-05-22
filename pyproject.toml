@@ -36,7 +36,7 @@ dependencies = [
 gestureflow = "main:run"
 
 [project.urls]
-Repository = "https://github.com/sarilp/GestureFlow"
+Repository = "https://github.com/Flizzy50/GestureFlow"
 
 # Flat-layout packaging: top-level main.py + config.py are exposed as
 # modules; everything else is a regular package.

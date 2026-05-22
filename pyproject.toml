@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gestureflow"
+version = "0.1.0"
+description = "Real-time hand gesture controller for desktop interaction. MediaPipe-based vision, modular gesture detection, OS action dispatch."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Saril Pattnaik", email = "sjp6840@psu.edu" }]
+keywords = ["computer-vision", "mediapipe", "gesture-recognition", "hci", "real-time"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video :: Capture",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    # See requirements.txt for the rationale behind each pin. In short:
+    # mediapipe 0.10.30+ ships broken Windows wheels; 0.10.31+ removes
+    # the legacy solutions API; 0.10.21 is the stable sweet spot.
+    "opencv-python>=4.9,<5",
+    "mediapipe==0.10.21",
+    "numpy>=1.26,<2",
+    "pynput>=1.7,<2",
+    "pycaw>=20220416",
+]
+
+[project.scripts]
+gestureflow = "main:run"
+
+[project.urls]
+Repository = "https://github.com/sarilp/GestureFlow"
+
+# Flat-layout packaging: top-level main.py + config.py are exposed as
+# modules; everything else is a regular package.
+[tool.setuptools]
+packages = ["controls", "gestures", "ui", "utils", "vision"]
+py-modules = ["main", "config"]

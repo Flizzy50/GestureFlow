@@ -35,6 +35,7 @@ from ui.overlay import Overlay
 from utils.logger import configure_logging, get_logger
 from utils.stage_timer import StageTimer
 from utils.timers import FpsCounter
+from vision.async_hand_tracker import AsyncHandTracker
 from vision.camera import Camera, CameraError
 from vision.hand_tracker import HandTracker
 
@@ -113,37 +114,50 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
     last_profile_log = 0.0
 
     try:
-        with Camera(cfg.camera) as camera, HandTracker(cfg.hand_tracker) as tracker:
+        with Camera(cfg.camera) as camera, \
+                HandTracker(cfg.hand_tracker) as tracker, \
+                AsyncHandTracker(tracker) as async_tracker:
             fps = FpsCounter(alpha=0.1)
+            last_rendered_id = -1
             while True:
+                # 1) Pump the camera: submit the freshest available frame
+                #    for inference. Non-blocking; replaces any pending frame.
                 read = camera.read_new()
-                if read is None:
-                    # No new frame yet. waitKey(1) yields to the GUI thread
-                    # and lets us catch the quit key without burning CPU.
+                if read is not None:
+                    frame, _frame_id = read
+                    if cfg.mirror_frame:
+                        with timer.time("mirror"):
+                            frame = cv2.flip(frame, 1)
+                    async_tracker.submit(frame, time.monotonic())
+
+                # 2) Render whatever inference last completed. During
+                #    warmup (no result yet) show the bare camera frame.
+                result = async_tracker.latest()
+                if result is None:
+                    if read is not None:
+                        cv2.imshow(cfg.window_title, frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
                     continue
 
-                frame, _frame_id = read
-                if cfg.mirror_frame:
-                    # Mirror BEFORE inference so MediaPipe's "Left"/"Right"
-                    # labels match what the user sees on screen.
-                    with timer.time("mirror"):
-                        frame = cv2.flip(frame, 1)
+                # 3) Skip the recognize+render path when inference hasn't
+                #    produced a NEW result since last loop. We still call
+                #    imshow so the GUI thread stays responsive.
+                if result.frame_id == last_rendered_id:
+                    cv2.imshow(cfg.window_title, result.frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                    continue
 
-                with timer.time("inference"):
-                    hands = tracker.process(frame)
+                last_rendered_id = result.frame_id
+                now = result.captured_at
                 fps.tick()
 
-                now = time.monotonic()
-
                 with timer.time("motion+recognize"):
-                    # Update motion buffers BEFORE recognition so the
-                    # recognizer reads the freshest snapshot for each hand.
-                    for hand in hands:
+                    for hand in result.hands:
                         motion_tracker.update(hand, now)
                     all_detections: List[Detection] = []
-                    for hand in hands:
+                    for hand in result.hands:
                         all_detections.extend(recognizer.process(hand))
 
                 with timer.time("stability+dispatch"):
@@ -172,19 +186,24 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
                         )
 
                 with timer.time("render"):
-                    overlay.draw(frame, fps.fps, hands, top_static, now)
+                    overlay.draw(result.frame, fps.fps, result.hands, top_static, now)
 
                 with timer.time("imshow"):
-                    cv2.imshow(cfg.window_title, frame)
+                    cv2.imshow(cfg.window_title, result.frame)
                 with timer.time("waitkey"):
                     key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
 
-                # Periodic timing summary. EMA values are stable by the
-                # time the first interval ticks (alpha=0.1 -> ~10 frames).
+                # Periodic timing summary. Note: "inference" is no longer
+                # in the timings — it runs on a worker thread now and
+                # doesn't gate main-loop iteration time. The FpsCounter
+                # measures effective end-to-end throughput.
                 if now - last_profile_log >= _PROFILE_LOG_INTERVAL:
-                    log.info("PROFILE ms | %s", timer.format_summary())
+                    log.info(
+                        "PROFILE ms | fps=%.1f | %s",
+                        fps.fps, timer.format_summary(),
+                    )
                     last_profile_log = now
     except CameraError as e:
         log.error("camera error: %s", e)

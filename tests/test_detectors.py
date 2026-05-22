@@ -25,6 +25,7 @@ from tests._factories import (
     open_palm_hand,
     pinch_hand,
     scaled,
+    three_down_hand,
     two_fingers_hand,
 )
 
@@ -86,32 +87,65 @@ class TestPinchDetector(unittest.TestCase):
     def setUp(self):
         self.d = PinchDetector()
 
-    def test_fires_on_pinch(self):
-        det = self.d.detect(_bundle(pinch_hand()))
+    def test_fires_on_three_down_pose(self):
+        det = self.d.detect(_bundle(three_down_hand()))
         self.assertIsNotNone(det)
         self.assertEqual(det.name, "pinch")
         self.assertGreater(det.confidence, 0.95)
 
     def test_rejects_open_palm(self):
-        """Thumb and index tips are far apart in an open palm — no pinch."""
+        """Middle/ring/pinky are all extended — pose fails on three-down."""
         self.assertIsNone(self.d.detect(_bundle(open_palm_hand())))
 
     def test_rejects_fist(self):
-        """The critical false-positive case: in a fist the thumb and
-        index TIPS happen to be close, but the index is curled. The
-        min_index_extension guard must reject this."""
+        """Subtle: a fist DOES have middle/ring/pinky curled (matching
+        the three-down condition), but the index is also curled.
+        min_index_extension is the load-bearing guard here — without it,
+        every fist would trigger volume mode."""
         self.assertIsNone(self.d.detect(_bundle(fist_hand())))
 
-    def test_scale_invariance(self):
-        """Pinch at 2x camera distance must still fire — the whole point
-        of hand_scale normalization."""
-        det = self.d.detect(_bundle(scaled(pinch_hand(), factor=2.0)))
+    def test_rejects_two_fingers(self):
+        """Two-fingers has middle EXTENDED, violating three-down."""
+        self.assertIsNone(self.d.detect(_bundle(two_fingers_hand())))
+
+    def test_emits_thumb_index_gap_in_metadata(self):
+        """VolumeAction reads metadata['pinch_ratio'] as the slider value.
+        If this contract breaks, volume control silently no-ops."""
+        det = self.d.detect(_bundle(three_down_hand(thumb_index_gap=0.10)))
         self.assertIsNotNone(det)
-        self.assertGreater(det.confidence, 0.95)
+        self.assertIn("pinch_ratio", det.metadata)
+        self.assertGreater(det.metadata["pinch_ratio"], 0.0)
+
+    def test_gap_varies_with_thumb_position(self):
+        """Two poses with different thumb-index gaps must produce
+        different pinch_ratio values — the slider's whole point."""
+        close = self.d.detect(_bundle(three_down_hand(thumb_index_gap=0.05)))
+        far = self.d.detect(_bundle(three_down_hand(thumb_index_gap=0.20)))
+        self.assertIsNotNone(close)
+        self.assertIsNotNone(far)
+        self.assertLess(close.metadata["pinch_ratio"], far.metadata["pinch_ratio"])
+
+    def test_scale_invariance(self):
+        """Pose at 2x camera distance must still fire AND produce the
+        same ratio — hand_scale normalization protects against the user
+        moving closer/farther from the camera."""
+        original = self.d.detect(_bundle(three_down_hand()))
+        zoomed = self.d.detect(_bundle(scaled(three_down_hand(), factor=2.0)))
+        self.assertIsNotNone(original)
+        self.assertIsNotNone(zoomed)
+        self.assertAlmostEqual(
+            original.metadata["pinch_ratio"],
+            zoomed.metadata["pinch_ratio"],
+            places=5,
+        )
 
     def test_invalid_thresholds_rejected(self):
         with self.assertRaises(ValueError):
-            PinchDetector(closed_ratio=0.5, open_ratio=0.4)
+            PinchDetector(max_other_extension=-0.1)
+        with self.assertRaises(ValueError):
+            PinchDetector(max_other_extension=1.5)
+        with self.assertRaises(ValueError):
+            PinchDetector(min_index_extension=-0.1)
 
 
 class TestTwoFingersDetector(unittest.TestCase):

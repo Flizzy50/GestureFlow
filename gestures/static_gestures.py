@@ -94,52 +94,60 @@ class FistDetector(GestureDetector):
 
 
 class PinchDetector(GestureDetector):
-    """Pinch: thumb tip touching (or close to) index tip.
+    """Volume-slider pose: middle, ring, and pinky curled; thumb and
+    index free to vary their gap.
 
-    The two failure modes a junior implementation would hit:
-      1) Scale dependence — raw thumb-index distance shrinks with camera
-         distance. We divide by hand_scale to get a depth-invariant ratio.
-      2) Fist false-positive — in a fist, thumb tip is also near index
-         (near the PIP joint, not the tip), but the index is curled.
-         Requiring index_extension > min_index_extension rejects this.
+    NOT the classic 'OK sign' pinch — that conflates engagement with
+    control (the gap is both the trigger and the value). Here three
+    fingers down is the engagement condition; the thumb-index gap is
+    a continuous control signal that VolumeAction reads from metadata.
 
-    Confidence ramps continuously: 0.0 at `open_ratio` (fingers apart),
-    1.0 at `closed_ratio` (touching). This smooth signal is useful for
-    Phase 3's volume control — pinch tightness can map to a value.
+    Rejection cases:
+      - fist: middle/ring/pinky are also down, BUT the index is curled
+        too (extension near 0) — the min_index_extension guard rejects.
+      - open palm, two fingers, etc: middle/ring/pinky aren't all down.
+
+    Confidence measures how cleanly the three "down" fingers are curled
+    (1 - max of the three). The thumb-index gap rides along in metadata
+    untouched by confidence — the action handler interprets it.
     """
 
     name = "pinch"
 
     def __init__(
         self,
-        closed_ratio: float = 0.20,
-        open_ratio: float = 0.45,
-        min_index_extension: float = 0.30,
-        min_confidence: float = 0.50,
+        max_other_extension: float = 0.30,
+        min_index_extension: float = 0.55,
+        min_confidence: float = 0.60,
     ) -> None:
-        if open_ratio <= closed_ratio:
-            raise ValueError("open_ratio must be > closed_ratio")
-        self._closed = closed_ratio
-        self._open = open_ratio
-        self._min_idx = min_index_extension
+        if not 0.0 <= max_other_extension <= 1.0:
+            raise ValueError("max_other_extension must be in [0, 1]")
+        if not 0.0 <= min_index_extension <= 1.0:
+            raise ValueError("min_index_extension must be in [0, 1]")
+        self._max_other = max_other_extension
+        self._min_index = min_index_extension
         self._min_conf = min_confidence
 
     def detect(self, features: FeatureBundle) -> Optional[Detection]:
-        if features.fingers.index < self._min_idx:
+        f = features.fingers
+        # All three "lower" fingers must be curled; gate on the worst.
+        worst_curl = max(f.middle, f.ring, f.pinky)
+        if worst_curl > self._max_other:
             return None
-        ratio = pinch_distance(features.hand)
-        # Linear ramp: closed->1.0, open->0.0, clamp outside.
-        confidence = (self._open - ratio) / (self._open - self._closed)
-        if confidence < 0.0:
-            confidence = 0.0
-        elif confidence > 1.0:
-            confidence = 1.0
+        # Index needs to be extended enough that there's a meaningful
+        # tip to measure to. Fists fail this gate.
+        if f.index < self._min_index:
+            return None
+
+        confidence = 1.0 - worst_curl
         if confidence < self._min_conf:
             return None
+
+        gap = pinch_distance(features.hand)
         return Detection(
             name=self.name,
             confidence=confidence,
-            metadata={"pinch_ratio": ratio},
+            metadata={"pinch_ratio": gap, "finger_scores": f.as_tuple},
         )
 
 

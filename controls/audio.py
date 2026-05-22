@@ -122,8 +122,10 @@ class VolumeAction(ActionHandler):
         if current_ratio is None:
             return False
 
-        # tighter (smaller ratio) than baseline -> positive delta -> louder
-        delta = (self._base_ratio - current_ratio) * self._sensitivity
+        # Gap larger than baseline -> louder. Smaller -> quieter.
+        # Sign convention matches the new PinchDetector semantics: thumb
+        # and index spread out is "increase", brought closer is "decrease".
+        delta = (current_ratio - self._base_ratio) * self._sensitivity
         target = self._base_volume + delta
         if target < 0.0:
             target = 0.0

@@ -102,6 +102,35 @@ def fist_hand() -> Hand:
     )
 
 
+def three_down_hand(thumb_index_gap: float = 0.10) -> Hand:
+    """Volume-slider pose: middle/ring/pinky curled, thumb and index
+    extended with a configurable gap between their tips.
+
+    `thumb_index_gap` controls the horizontal separation between thumb
+    tip and index tip in normalized image space. Larger gap = "louder"
+    in VolumeAction's mapping.
+    """
+    # Index extends straight up from its MCP.
+    index_tip_x = 0.45
+    # Thumb angles outward; controlling its horizontal offset controls
+    # the thumb-to-index gap.
+    thumb_tip_x = index_tip_x - thumb_index_gap
+    thumb = [
+        lm(0.40, 0.85),
+        lm(thumb_tip_x + 0.05, 0.75),
+        lm(thumb_tip_x + 0.025, 0.65),
+        lm(thumb_tip_x, 0.55),
+    ]
+    index = straight_finger(0.45, 0.75, 0.0, -0.40)
+    return build_hand(
+        thumb=thumb,
+        index=index,
+        middle=curled_finger(0.50, 0.75),
+        ring=curled_finger(0.55, 0.75),
+        pinky=curled_finger(0.60, 0.78),
+    )
+
+
 def pinch_hand() -> Hand:
     """Thumb tip meeting index tip at a single point.
 

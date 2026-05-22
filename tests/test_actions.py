@@ -217,43 +217,46 @@ class TestVolumeAction(unittest.TestCase):
         # but with delta=0 -> target=base_volume.
         self.assertAlmostEqual(audio.volume, 0.50, places=6)
 
-    def test_tighter_pinch_raises_volume(self):
+    def test_larger_gap_raises_volume(self):
         audio = _FakeAudio(initial=0.50)
         v = VolumeAction(sensitivity=2.5, rate_hz=100, get_volume=audio.get, set_volume=audio.set)
         v.update(_pinch(ratio=0.30), now=0.0)   # baseline
-        v.update(_pinch(ratio=0.20), now=0.02)  # tighter -> louder
-        # delta = (0.30 - 0.20) * 2.5 = 0.25
+        v.update(_pinch(ratio=0.40), now=0.02)  # bigger gap -> louder
+        # delta = (0.40 - 0.30) * 2.5 = +0.25
         self.assertAlmostEqual(audio.volume, 0.75, places=6)
 
-    def test_looser_pinch_lowers_volume(self):
+    def test_smaller_gap_lowers_volume(self):
         audio = _FakeAudio(initial=0.50)
         v = VolumeAction(sensitivity=2.5, rate_hz=100, get_volume=audio.get, set_volume=audio.set)
         v.update(_pinch(ratio=0.30), now=0.0)
-        v.update(_pinch(ratio=0.40), now=0.02)  # looser -> quieter
-        # delta = (0.30 - 0.40) * 2.5 = -0.25
+        v.update(_pinch(ratio=0.20), now=0.02)  # smaller gap -> quieter
+        # delta = (0.20 - 0.30) * 2.5 = -0.25
         self.assertAlmostEqual(audio.volume, 0.25, places=6)
 
     def test_volume_clamps_to_unit_interval(self):
         audio = _FakeAudio(initial=0.9)
         v = VolumeAction(sensitivity=10.0, rate_hz=100, get_volume=audio.get, set_volume=audio.set)
         v.update(_pinch(ratio=0.30), now=0.0)
-        v.update(_pinch(ratio=0.00), now=0.02)  # huge tighten with huge sensitivity
-        self.assertEqual(audio.volume, 1.0)
+        # Closing the gap hard with huge sensitivity -> wants to go far
+        # below 0 -> clamps to 0.0.
+        v.update(_pinch(ratio=0.00), now=0.02)
+        self.assertEqual(audio.volume, 0.0)
         # Now the other direction.
         v.update(None, now=0.10)                # release
         audio.volume = 0.1
         v.update(_pinch(ratio=0.30), now=0.20)  # new baseline (writes 0.1)
-        v.update(_pinch(ratio=0.80), now=0.22)  # loosen a lot
-        self.assertEqual(audio.volume, 0.0)
+        v.update(_pinch(ratio=0.80), now=0.22)  # opening the gap a lot
+        self.assertEqual(audio.volume, 1.0)
 
     def test_release_then_re_engage_rebases(self):
-        """After release, system volume may have been changed by other means
-        (the user used the keyboard). The next pinch must use the CURRENT
-        volume as the new base, not the one captured before release."""
+        """After release, system volume may have been changed by other
+        means (the user used the keyboard). The next engagement must use
+        the CURRENT volume as the new base, not the one captured before
+        release."""
         audio = _FakeAudio(initial=0.40)
         v = VolumeAction(sensitivity=2.0, rate_hz=100, get_volume=audio.get, set_volume=audio.set)
         v.update(_pinch(ratio=0.30), now=0.0)   # baseline 0.40
-        v.update(_pinch(ratio=0.20), now=0.02)  # +0.20 -> 0.60
+        v.update(_pinch(ratio=0.40), now=0.02)  # +0.20 -> 0.60
         v.update(None, now=0.10)                # release
 
         # User cranks volume up via keyboard between gesture sessions
@@ -261,7 +264,7 @@ class TestVolumeAction(unittest.TestCase):
 
         v.update(_pinch(ratio=0.30), now=0.30)  # new baseline = 0.90
         self.assertAlmostEqual(audio.volume, 0.90, places=6)
-        v.update(_pinch(ratio=0.20), now=0.32)  # +0.20 -> 1.0 (clamped from 1.1)
+        v.update(_pinch(ratio=0.40), now=0.32)  # +0.20 -> 1.0 (clamped from 1.1)
         self.assertEqual(audio.volume, 1.0)
 
     def test_rate_limit_holds_writes(self):

@@ -33,9 +33,14 @@ from gestures.static_gestures import (
 )
 from ui.overlay import Overlay
 from utils.logger import configure_logging, get_logger
+from utils.stage_timer import StageTimer
 from utils.timers import FpsCounter
 from vision.camera import Camera, CameraError
 from vision.hand_tracker import HandTracker
+
+
+# Profile log cadence: one timing summary every N seconds.
+_PROFILE_LOG_INTERVAL = 5.0
 
 
 # Registry of available action handlers. Config bindings reference these
@@ -104,6 +109,9 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
 
     overlay = Overlay()
 
+    timer = StageTimer()
+    last_profile_log = 0.0
+
     try:
         with Camera(cfg.camera) as camera, HandTracker(cfg.hand_tracker) as tracker:
             fps = FpsCounter(alpha=0.1)
@@ -120,54 +128,64 @@ def run(cfg: Config = DEFAULT_CONFIG) -> int:
                 if cfg.mirror_frame:
                     # Mirror BEFORE inference so MediaPipe's "Left"/"Right"
                     # labels match what the user sees on screen.
-                    frame = cv2.flip(frame, 1)
+                    with timer.time("mirror"):
+                        frame = cv2.flip(frame, 1)
 
-                hands = tracker.process(frame)
+                with timer.time("inference"):
+                    hands = tracker.process(frame)
                 fps.tick()
 
                 now = time.monotonic()
-                # Update motion buffers BEFORE recognition so the recognizer
-                # reads the freshest snapshot for each hand.
-                for hand in hands:
-                    motion_tracker.update(hand, now)
 
-                # Recognize per hand, flatten, then debounce.
-                all_detections: List[Detection] = []
-                for hand in hands:
-                    all_detections.extend(recognizer.process(hand))
+                with timer.time("motion+recognize"):
+                    # Update motion buffers BEFORE recognition so the
+                    # recognizer reads the freshest snapshot for each hand.
+                    for hand in hands:
+                        motion_tracker.update(hand, now)
+                    all_detections: List[Detection] = []
+                    for hand in hands:
+                        all_detections.extend(recognizer.process(hand))
 
-                stable_detections = stability.update(all_detections)
-                # Partition by category: static gestures persist on the HUD,
-                # dynamic gestures (swipes) flash transiently and get a
-                # linger so the user can actually see them.
-                top_static: Optional[Detection] = next(
-                    (d for d in stable_detections if d.name not in _DYNAMIC_GESTURE_NAMES),
-                    None,
-                )
-                top_dynamic: Optional[Detection] = next(
-                    (d for d in stable_detections if d.name in _DYNAMIC_GESTURE_NAMES),
-                    None,
-                )
-                if top_dynamic is not None:
-                    overlay.note_dynamic(top_dynamic, now)
-                    log.info(
-                        "dynamic gesture stable: %s (conf=%.2f)",
-                        top_dynamic.name, top_dynamic.confidence,
+                with timer.time("stability+dispatch"):
+                    stable_detections = stability.update(all_detections)
+                    top_static: Optional[Detection] = next(
+                        (d for d in stable_detections if d.name not in _DYNAMIC_GESTURE_NAMES),
+                        None,
                     )
-
-                fired = dispatcher.dispatch(stable_detections, now)
-                if fired:
-                    overlay.note_fired(fired[0])
-                    log.info(
-                        "action fired: %s (from %s, conf=%.2f)",
-                        fired[0].action_name, fired[0].gesture_name, fired[0].confidence,
+                    top_dynamic: Optional[Detection] = next(
+                        (d for d in stable_detections if d.name in _DYNAMIC_GESTURE_NAMES),
+                        None,
                     )
+                    if top_dynamic is not None:
+                        overlay.note_dynamic(top_dynamic, now)
+                        log.info(
+                            "dynamic gesture stable: %s (conf=%.2f)",
+                            top_dynamic.name, top_dynamic.confidence,
+                        )
 
-                overlay.draw(frame, fps.fps, hands, top_static, now)
+                    fired = dispatcher.dispatch(stable_detections, now)
+                    if fired:
+                        overlay.note_fired(fired[0])
+                        log.info(
+                            "action fired: %s (from %s, conf=%.2f)",
+                            fired[0].action_name, fired[0].gesture_name, fired[0].confidence,
+                        )
 
-                cv2.imshow(cfg.window_title, frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                with timer.time("render"):
+                    overlay.draw(frame, fps.fps, hands, top_static, now)
+
+                with timer.time("imshow"):
+                    cv2.imshow(cfg.window_title, frame)
+                with timer.time("waitkey"):
+                    key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
                     break
+
+                # Periodic timing summary. EMA values are stable by the
+                # time the first interval ticks (alpha=0.1 -> ~10 frames).
+                if now - last_profile_log >= _PROFILE_LOG_INTERVAL:
+                    log.info("PROFILE ms | %s", timer.format_summary())
+                    last_profile_log = now
     except CameraError as e:
         log.error("camera error: %s", e)
         return 2

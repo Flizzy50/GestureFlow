@@ -163,6 +163,5 @@ class TestOverlayDrawSmoke(unittest.TestCase):
             top_static=_det("open_palm", 0.97), now=0.5,
         )
 
-
 if __name__ == "__main__":
     unittest.main()

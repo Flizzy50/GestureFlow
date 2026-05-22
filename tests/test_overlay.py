@@ -136,8 +136,9 @@ class TestOverlayDrawSmoke(unittest.TestCase):
             top_static=_det("open_palm", 0.95), now=0.0,
         )
 
-    def test_draw_with_swipe_arrow_visible(self):
-        """Exercises the arrow-drawing branch."""
+    def test_draw_with_dynamic_gesture_lingering(self):
+        """Exercises the dynamic-gesture HUD-line code path during the
+        linger window."""
         o = Overlay(dynamic_linger_seconds=1.0)
         o.note_dynamic(_det("swipe_left", 0.7), now=0.0)
         o.draw(

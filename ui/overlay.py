@@ -27,7 +27,7 @@ import numpy as np
 
 from controls.base import FiredAction
 from gestures.base import Detection
-from gestures.features import LM, finger_extensions
+from gestures.features import finger_extensions
 from vision.hand_tracker import HAND_CONNECTIONS, Hand
 
 
@@ -97,12 +97,11 @@ class Overlay:
         top_static: Optional[Detection],
         now: float,
     ) -> None:
-        """Render landmarks, HUD, finger bars, and swipe arrow into `frame`."""
+        """Render landmarks, HUD, and finger bars into `frame`."""
         self._draw_hands(frame, hands)
         primary = hands[0] if hands else None
         if primary is not None:
             self._draw_finger_bars(frame, primary)
-            self._draw_swipe_arrow(frame, primary, now)
         self._draw_hud(frame, fps, len(hands), top_static, now)
 
     def _draw_hands(self, frame: np.ndarray, hands: Sequence[Hand]) -> None:
@@ -146,37 +145,6 @@ class Overlay:
                 frame, label, (x + 2, y_top + bar_h + 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA,
             )
-
-    def _draw_swipe_arrow(
-        self, frame: np.ndarray, hand: Hand, now: float,
-    ) -> None:
-        """Directional arrow from the wrist when a swipe is fresh.
-
-        Anchored at the wrist (most stable single landmark) and lingers
-        with the dynamic-gesture banner so the user sees the direction
-        for the full 1s window, not just the brief detection moment.
-        """
-        if not self.dynamic_visible(now):
-            return
-        assert self._last_dynamic is not None
-        name = self._last_dynamic.name
-        if name == "swipe_left":
-            direction = -1
-        elif name == "swipe_right":
-            direction = +1
-        else:
-            return
-
-        h, w = frame.shape[:2]
-        wrist = hand.landmark(LM.WRIST)
-        cx = int(wrist.x * w)
-        cy = int(wrist.y * h)
-        arrow_len = int(w * 0.12)  # ~12% of frame width
-        start = (cx, cy)
-        end = (cx + direction * arrow_len, cy)
-        cv2.arrowedLine(
-            frame, start, end, _DYNAMIC_COLOR, 5, cv2.LINE_AA, tipLength=0.35,
-        )
 
     def _draw_hud(
         self,

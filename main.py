@@ -16,9 +16,8 @@ import cv2
 from config import DEFAULT_CONFIG, Config
 from controls.audio import VolumeAction
 from controls.base import ActionHandler
-from controls.browser import BrowserBackAction, BrowserForwardAction
 from controls.dispatcher import ActionDispatcher
-from controls.media import PlayPauseAction
+from controls.media import PlayPauseAction, SkipBackwardAction, SkipForwardAction
 from controls.scroll import ScrollAction
 from gestures.base import Detection
 from gestures.dynamic_gestures import SwipeLeftDetector, SwipeRightDetector
@@ -51,8 +50,8 @@ def _build_action_handlers() -> Dict[str, ActionHandler]:
         "play_pause": PlayPauseAction(),
         "volume": VolumeAction(),
         "scroll": ScrollAction(),
-        "browser_back": BrowserBackAction(),
-        "browser_forward": BrowserForwardAction(),
+        "skip_forward": SkipForwardAction(),
+        "skip_backward": SkipBackwardAction(),
     }
 
 log = get_logger("gestureflow.main")

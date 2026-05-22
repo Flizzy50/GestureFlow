@@ -27,6 +27,20 @@ def _press_media_play_pause() -> None:
     kb.release(Key.media_play_pause)
 
 
+def _press_media_next() -> None:
+    from pynput.keyboard import Controller, Key
+    kb = Controller()
+    kb.press(Key.media_next)
+    kb.release(Key.media_next)
+
+
+def _press_media_previous() -> None:
+    from pynput.keyboard import Controller, Key
+    kb = Controller()
+    kb.press(Key.media_previous)
+    kb.release(Key.media_previous)
+
+
 class PlayPauseAction(ActionHandler):
     """Single-shot media play/pause toggle.
 
@@ -50,6 +64,53 @@ class PlayPauseAction(ActionHandler):
     ) -> None:
         self._gate = CooldownGate(cooldown_seconds)
         self._press = key_press or _press_media_play_pause
+
+    def update(self, detection: Optional[Detection], now: float) -> bool:
+        if self._gate.should_fire(is_active=detection is not None, now=now):
+            self._press()
+            return True
+        return False
+
+
+class SkipForwardAction(ActionHandler):
+    """Skip to next track. Bound to swipe_left: iPhone-carousel-style
+    'push content left to advance.'
+
+    Same single-shot + cooldown shape as PlayPauseAction. 0.8s cooldown
+    covers the ~400ms residual-buffer continuation that follows any
+    swipe detection — the gate fires once per actual hand swipe.
+    """
+
+    name = "skip_forward"
+
+    def __init__(
+        self,
+        cooldown_seconds: float = 0.8,
+        key_press: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._gate = CooldownGate(cooldown_seconds)
+        self._press = key_press or _press_media_next
+
+    def update(self, detection: Optional[Detection], now: float) -> bool:
+        if self._gate.should_fire(is_active=detection is not None, now=now):
+            self._press()
+            return True
+        return False
+
+
+class SkipBackwardAction(ActionHandler):
+    """Skip to previous track. Bound to swipe_right (the mirror of
+    skip_forward — pulls content rightward to reveal what came before)."""
+
+    name = "skip_backward"
+
+    def __init__(
+        self,
+        cooldown_seconds: float = 0.8,
+        key_press: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._gate = CooldownGate(cooldown_seconds)
+        self._press = key_press or _press_media_previous
 
     def update(self, detection: Optional[Detection], now: float) -> bool:
         if self._gate.should_fire(is_active=detection is not None, now=now):

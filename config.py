@@ -69,8 +69,10 @@ _DEFAULT_BINDINGS: Dict[str, str] = {
     "fist": "play_pause",
     "pinch": "volume",
     "two_fingers": "scroll",
-    "swipe_left": "browser_back",
-    "swipe_right": "browser_forward",
+    # Swipe semantics follow touchscreen-carousel convention: pushing
+    # content leftward advances to the next item.
+    "swipe_left": "skip_forward",
+    "swipe_right": "skip_backward",
 }
 
 

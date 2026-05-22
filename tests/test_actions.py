@@ -15,9 +15,8 @@ from typing import List, Optional
 
 from controls.audio import VolumeAction
 from controls.base import ActionHandler, CooldownGate, FiredAction, RateLimiter
-from controls.browser import BrowserBackAction, BrowserForwardAction
 from controls.dispatcher import ActionDispatcher
-from controls.media import PlayPauseAction
+from controls.media import PlayPauseAction, SkipBackwardAction, SkipForwardAction
 from controls.scroll import ScrollAction
 from gestures.base import Detection
 
@@ -429,19 +428,19 @@ def _swipe(name: str, confidence: float = 0.8) -> Detection:
     return Detection(name=name, confidence=confidence, metadata={})
 
 
-class TestBrowserBackAction(unittest.TestCase):
+class TestSkipForwardAction(unittest.TestCase):
     def test_fires_on_first_rising_edge(self):
         presses = []
-        a = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: presses.append("back"))
+        a = SkipForwardAction(cooldown_seconds=0.8, key_press=lambda: presses.append("next"))
         self.assertTrue(a.update(_swipe("swipe_left"), now=0.0))
-        self.assertEqual(presses, ["back"])
+        self.assertEqual(presses, ["next"])
 
     def test_does_not_re_fire_during_residual_buffer_continuation(self):
         """The whole reason for the 0.8s cooldown: a single swipe leaves
         samples in the motion buffer for ~400ms, so the detector keeps
         firing for that long. The handler must NOT re-press the key."""
         presses = []
-        a = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: presses.append("back"))
+        a = SkipForwardAction(cooldown_seconds=0.8, key_press=lambda: presses.append("next"))
         a.update(_swipe("swipe_left"), now=0.0)
         for t in (0.05, 0.10, 0.20, 0.30, 0.40):
             a.update(_swipe("swipe_left"), now=t)
@@ -449,37 +448,38 @@ class TestBrowserBackAction(unittest.TestCase):
 
     def test_re_fires_after_release_and_cooldown(self):
         presses = []
-        a = BrowserBackAction(cooldown_seconds=0.5, key_press=lambda: presses.append("back"))
+        a = SkipForwardAction(cooldown_seconds=0.5, key_press=lambda: presses.append("next"))
         a.update(_swipe("swipe_left"), now=0.0)   # fire
         a.update(None, now=0.45)                  # release (gesture absent)
         a.update(_swipe("swipe_left"), now=0.60)  # past cooldown -> fire
         self.assertEqual(len(presses), 2)
 
     def test_name(self):
-        self.assertEqual(BrowserBackAction().name, "browser_back")
+        self.assertEqual(SkipForwardAction().name, "skip_forward")
 
 
-class TestBrowserForwardAction(unittest.TestCase):
+class TestSkipBackwardAction(unittest.TestCase):
     def test_fires_on_first_rising_edge(self):
         presses = []
-        a = BrowserForwardAction(cooldown_seconds=0.8, key_press=lambda: presses.append("fwd"))
+        a = SkipBackwardAction(cooldown_seconds=0.8, key_press=lambda: presses.append("prev"))
         self.assertTrue(a.update(_swipe("swipe_right"), now=0.0))
-        self.assertEqual(presses, ["fwd"])
+        self.assertEqual(presses, ["prev"])
 
     def test_independent_handlers_dont_share_state(self):
-        """Back and forward are separate instances; firing one must not
-        affect the cooldown of the other."""
-        back_presses, fwd_presses = [], []
-        back = BrowserBackAction(cooldown_seconds=0.8, key_press=lambda: back_presses.append("b"))
-        fwd = BrowserForwardAction(cooldown_seconds=0.8, key_press=lambda: fwd_presses.append("f"))
-        back.update(_swipe("swipe_left"), now=0.0)
-        # Forward should still fire immediately even though back just fired.
-        fwd.update(_swipe("swipe_right"), now=0.05)
-        self.assertEqual(back_presses, ["b"])
+        """Forward and backward are separate instances; firing one must
+        not affect the cooldown of the other."""
+        fwd_presses, back_presses = [], []
+        fwd = SkipForwardAction(cooldown_seconds=0.8, key_press=lambda: fwd_presses.append("f"))
+        back = SkipBackwardAction(cooldown_seconds=0.8, key_press=lambda: back_presses.append("b"))
+        fwd.update(_swipe("swipe_left"), now=0.0)
+        # Skip-backward should still fire immediately even though
+        # skip-forward just fired.
+        back.update(_swipe("swipe_right"), now=0.05)
         self.assertEqual(fwd_presses, ["f"])
+        self.assertEqual(back_presses, ["b"])
 
     def test_name(self):
-        self.assertEqual(BrowserForwardAction().name, "browser_forward")
+        self.assertEqual(SkipBackwardAction().name, "skip_backward")
 
 
 if __name__ == "__main__":
